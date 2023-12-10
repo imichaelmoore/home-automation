@@ -1,57 +1,88 @@
-""" Scrapes AmbientWeather station for current conditions, writes to Influx """
+""" 
+Scrapes AmbientWeather station for current conditions and writes to InfluxDB.
+"""
 
-from lxml import html
-import requests
-from influxdb import InfluxDBClient
-from pprint import pprint
 import os
+import requests
+from lxml import html
+from influxdb import InfluxDBClient
 
-station_ip = os.getenv("WEATHER_STATION_IP") # Change this to your ObserverIP address
 
-# Get the latest live data from the ObserverIP, then create a tree from the content we can parse
-page = requests.get("http://{}/livedata.htm".format(station_ip))
-tree = html.fromstring(page.content)
-print(tree)
+def scrape_weather_data(station_ip: str) -> dict:
+    """
+    Scrapes the weather data from AmbientWeather station.
 
-# Screen scrape the data. Help from:
-# http://docs.python-guide.org/en/latest/scenarios/scrape/
-# http://stackoverflow.com/a/22469878/1177153
-inBattery = tree.xpath('//input[@name="inBattSta"]')[0].value
-outBattery = tree.xpath('//input[@name="outBattSta1"]')[0].value
-inTemp = tree.xpath('//input[@name="inTemp"]')[0].value
-inHumid = tree.xpath('//input[@name="inHumi"]')[0].value
-absPressure = tree.xpath('//input[@name="AbsPress"]')[0].value
-relPressure = tree.xpath('//input[@name="RelPress"]')[0].value
-outTemp = tree.xpath('//input[@name="outTemp"]')[0].value
-outHumid = tree.xpath('//input[@name="outHumi"]')[0].value
-windDir = tree.xpath('//input[@name="windir"]')[0].value
-windSpeed = tree.xpath('//input[@name="avgwind"]')[0].value
-windGust = tree.xpath('//input[@name="gustspeed"]')[0].value
-solarRadiation = tree.xpath('//input[@name="solarrad"]')[0].value
-uv = tree.xpath('//input[@name="uv"]')[0].value
-uvi = tree.xpath('//input[@name="uvi"]')[0].value
-rainHourly = tree.xpath('//input[@name="rainofhourly"]')[0].value
+    Args:
+        station_ip (str): IP address of the AmbientWeather station.
 
-jblob = {"inBattery":inBattery, "outBattery":outBattery, "inTemp":inTemp, "inHumid":inHumid, "absPressure":absPressure, "relPressure":relPressure, "outTemp":outTemp, "outHumid":outHumid, "windDir":windDir, "windSpeed":windSpeed, "windGust":windGust, "solarRadiation":solarRadiation, "uv":uv, "uvi":uvi, "rainHourly":rainHourly}
-#requests.post("http://mon.33901.cloud:5000/post", json=jblob)
+    Returns:
+        dict: Scraped weather data.
+    """
+    page = requests.get(f"http://{station_ip}/livedata.htm")
+    tree = html.fromstring(page.content)
 
-client = InfluxDBClient(os.getenv("INFLUX_HOSTNAME"), 8086, os.getenv("INFLUX_USERNAME"), os.getenv("INFLUX_PASSWORD"), os.getenv("INFLUX_DATABASE"))
+    weather_data = {
+        "inBattery": tree.xpath('//input[@name="inBattSta"]/@value')[0],
+        "outBattery": tree.xpath('//input[@name="outBattSta1"]/@value')[0],
+        "inTemp": tree.xpath('//input[@name="inTemp"]/@value')[0],
+        "inHumid": tree.xpath('//input[@name="inHumi"]/@value')[0],
+        "absPressure": tree.xpath('//input[@name="AbsPress"]/@value')[0],
+        "relPressure": tree.xpath('//input[@name="RelPress"]/@value')[0],
+        "outTemp": tree.xpath('//input[@name="outTemp"]/@value')[0],
+        "outHumid": tree.xpath('//input[@name="outHumi"]/@value')[0],
+        "windDir": tree.xpath('//input[@name="windir"]/@value')[0],
+        "windSpeed": tree.xpath('//input[@name="avgwind"]/@value')[0],
+        "windGust": tree.xpath('//input[@name="gustspeed"]/@value')[0],
+        "solarRadiation": tree.xpath('//input[@name="solarrad"]/@value')[0],
+        "uv": tree.xpath('//input[@name="uv"]/@value')[0],
+        "uvi": tree.xpath('//input[@name="uvi"]/@value')[0],
+        "rainHourly": tree.xpath('//input[@name="rainofhourly"]/@value')[0],
+    }
 
-json_body = [
-                {
-                    "measurement": "weather",
-                    "fields": {
-                        "temperature": float(outTemp),
-                        "humidity": float(outHumid),
-                        "windDir": float(windDir),
-                        "windSpeed": float(windSpeed),
-                        "windGust": float(windGust),
-                        "solarRadiation": float(solarRadiation),
-                        "uv": float(uv),
-                        "uvi": float(uvi),
-                        "rainHourly": float(rainHourly)
-                        }
-                }
-            ]
-client.write_points(json_body)
-pprint(json_body)
+    return weather_data
+
+
+def write_to_influx(client: InfluxDBClient, weather_data: dict) -> None:
+    """
+    Writes weather data to InfluxDB.
+
+    Args:
+        client (InfluxDBClient): InfluxDB client instance.
+        weather_data (dict): Weather data to write.
+    """
+    json_body = [
+        {
+            "measurement": "weather",
+            "fields": {
+                "temperature": float(weather_data["outTemp"]),
+                "humidity": float(weather_data["outHumid"]),
+                "windDir": float(weather_data["windDir"]),
+                "windSpeed": float(weather_data["windSpeed"]),
+                "windGust": float(weather_data["windGust"]),
+                "solarRadiation": float(weather_data["solarRadiation"]),
+                "uv": float(weather_data["uv"]),
+                "uvi": float(weather_data["uvi"]),
+                "rainHourly": float(weather_data["rainHourly"]),
+            },
+        }
+    ]
+    client.write_points(json_body)
+
+
+def main():
+    station_ip = os.getenv("WEATHER_STATION_IP")
+    weather_data = scrape_weather_data(station_ip)
+
+    influx_client = InfluxDBClient(
+        host=os.getenv("INFLUX_HOSTNAME"),
+        port=8086,
+        username=os.getenv("INFLUX_USERNAME"),
+        password=os.getenv("INFLUX_PASSWORD"),
+        database=os.getenv("INFLUX_DATABASE"),
+    )
+
+    write_to_influx(influx_client, weather_data)
+
+
+if __name__ == "__main__":
+    main()
